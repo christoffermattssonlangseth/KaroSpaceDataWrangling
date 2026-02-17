@@ -1,0 +1,24 @@
+# Data artifacts (typically large, machine-generated)
+*.h5ad
+*.h5
+*.hdf5
+*.loom
+*.zarr
+*.zarr.zip
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.tar.gz
+*.tgz
+*.zip
+
+# Notebook cache
+.ipynb_checkpoints/
+
+# Local/raw datasets
+data/
+tutorial_data/
+
+# Note: .gitignore cannot ignore files by size (e.g. >100 MB).
+# Use a pre-commit or pre-push hook to enforce file-size limits.
