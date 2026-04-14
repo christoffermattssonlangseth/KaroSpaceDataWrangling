@@ -17,7 +17,12 @@ a final pass, create the sentinel file:
 import csv
 import json
 import re
+import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import generate_spatial_corpus_dashboard as dashboard
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -37,6 +42,10 @@ FIELDNAMES = [
     "filename",
     "n_cells",
     "n_vars",
+    "n_donors",
+    "n_conditions",
+    "n_tissue_types",
+    "n_sections",
     "title",
     "assay",
     "organism",
@@ -119,13 +128,23 @@ def build_pubmed_query(stem: str) -> str | None:
 # Per-file extraction
 # ---------------------------------------------------------------------------
 
+_TRIVIAL = {"nan", "unknown", "na", "n/a", ""}
+
+
 def _unique_obs_values(obs: pd.DataFrame, col: str) -> str:
     """Return semicolon-joined unique non-trivial values from an obs column."""
     if col not in obs.columns:
         return ""
     vals = obs[col].dropna().unique().tolist()
-    filtered = [str(v) for v in vals if str(v) not in ("nan", "unknown", "na", "")]
+    filtered = [str(v) for v in vals if str(v).lower().strip() not in _TRIVIAL]
     return "; ".join(sorted(set(filtered)))
+
+
+def _count_unique(obs: pd.DataFrame, col: str) -> int:
+    """Count non-trivial unique values in an obs column."""
+    if col not in obs.columns:
+        return 0
+    return sum(1 for v in obs[col].dropna().unique() if str(v).lower().strip() not in _TRIVIAL)
 
 
 def process_file(filepath: Path) -> dict:
@@ -148,6 +167,13 @@ def process_file(filepath: Path) -> dict:
         row["donor_ids"] = _unique_obs_values(obs, "donor_id")
         row["dataset"] = _unique_obs_values(obs, "dataset")
         row["nicheformer_split"] = _unique_obs_values(obs, "nicheformer_split")
+
+        # Sample-level counts
+        row["n_donors"] = _count_unique(obs, "donor_id")
+        row["n_conditions"] = _count_unique(obs, "condition_id")
+        row["n_tissue_types"] = _count_unique(obs, "tissue")
+        # n_sections: spatial sections / library batches
+        row["n_sections"] = _count_unique(obs, "library_key")
 
         try:
             adata.file.close()
@@ -219,6 +245,11 @@ def main() -> None:
                 else:
                     pub = f"  doi={row['publication_doi']}" if row["publication_doi"] else ""
                     print(f"  {row['n_cells']:,} cells  {row['n_vars']:,} vars{pub}")
+            # Regenerate dashboard after each batch
+            try:
+                dashboard.generate()
+            except Exception as exc:
+                print(f"  [dashboard] warning: {exc}")
         else:
             ts = pd.Timestamp.now().strftime("%H:%M:%S")
             print(
@@ -240,6 +271,10 @@ def main() -> None:
                     processed.add(filepath.name)
                     print(f"  {row['n_cells']:,} cells  {row['n_vars']:,} vars")
             print(f"\nDone. {len(processed)} files recorded in {OUTPUT_CSV}")
+            try:
+                dashboard.generate()
+            except Exception as exc:
+                print(f"[dashboard] warning: {exc}")
             break
 
         time.sleep(POLL_INTERVAL_SECONDS)
