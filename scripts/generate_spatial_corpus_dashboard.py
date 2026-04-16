@@ -47,21 +47,10 @@ def load_data() -> pd.DataFrame:
 
 # ---------------------------------------------------------------------------
 # KaroSpace suitability score  (0–5)
+# Donors are the primary axis — KaroSpace is built to harness multi-sample data.
 # ---------------------------------------------------------------------------
 
 def _score(row: pd.Series) -> int:
-    """
-    KaroSpace fit is primarily about multi-sample data.
-    n_donors is the main axis; spatial assay and DOI are secondary bonuses.
-
-    Points:
-      n_donors >= 10  → 3 pts   (many biological replicates)
-      n_donors >= 5   → 2 pts
-      n_donors >= 2   → 1 pt
-      is_spatial      → +1 pt   (spatial assay = directly usable in KaroSpace)
-      has_doi         → +1 pt   (peer-reviewed)
-    Max: 5
-    """
     n_donors = int(row.get("n_donors", 0))
     assay_lower = str(row.get("assay", "")).lower()
     is_spatial = any(s in assay_lower for s in SPATIAL_ASSAYS)
@@ -142,9 +131,12 @@ def build_table_rows(df: pd.DataFrame) -> list[dict]:
         assay_color = ASSAY_COLORS.get(str(r.get("assay", "")), DEFAULT_COLOR)
         sc = _score(r)
         sc_label, sc_color = _SCORE_LABEL[sc]
+        is_spatial = any(s in str(r.get("assay", "")).lower() for s in SPATIAL_ASSAYS)
 
+        stem = r["filename"].replace(".h5ad", "")
         rows.append({
-            "filename":       r["filename"].replace(".h5ad", ""),
+            "filename":       stem,
+            "filepath":       f"/Volumes/processing/SpatialCorpus-110M/{stem}.h5ad",
             "n_cells":        int(r["n_cells"]),
             "n_vars":         int(r["n_vars"]),
             "n_donors":       int(r.get("n_donors", 0)),
@@ -162,344 +154,534 @@ def build_table_rows(df: pd.DataFrame) -> list[dict]:
             "score":          sc,
             "score_label":    sc_label,
             "score_color":    sc_color,
+            "is_spatial":     is_spatial,
         })
     return rows
 
 
 # ---------------------------------------------------------------------------
-# HTML template
+# HTML  (uses __PLACEHOLDER__ tokens instead of {format} to avoid escaping JS)
 # ---------------------------------------------------------------------------
 
-HTML_TEMPLATE = """\
-<!DOCTYPE html>
+HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SpatialCorpus-110M — Dataset Explorer</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
-  :root {{
-    --bg:      #0f1117;
-    --surface: #1a1d27;
-    --card:    #22263a;
-    --border:  #2e3350;
-    --accent:  #4f8ef7;
-    --text:    #e2e8f0;
-    --muted:   #8892a4;
-    --green:   #4fc47e;
-    --radius:  10px;
-  }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; }}
-  a {{ color: var(--accent); text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
+:root {
+  --bg:#0f1117; --surface:#1a1d27; --card:#1e2235; --border:#2a2f4a;
+  --accent:#4f8ef7; --text:#e2e8f0; --muted:#7a859a; --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 
-  header {{ background: var(--surface); border-bottom: 1px solid var(--border); padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }}
-  header h1 {{ font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }}
-  header span {{ color: var(--muted); font-size: 12px; }}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header h1{font-size:16px;font-weight:600;letter-spacing:-.3px}
+.updated{color:var(--muted);font-size:12px}
+#btnReload{background:none;border:1px solid var(--border);color:var(--muted);padding:4px 11px;border-radius:6px;cursor:pointer;font-size:12px}
+#btnReload:hover{border-color:var(--accent);color:var(--accent)}
 
-  .main {{ padding: 24px 32px; max-width: 1800px; margin: 0 auto; }}
+.main{padding:18px 26px;max-width:1900px;margin:0 auto}
 
-  /* Summary cards */
-  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }}
-  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }}
-  .card .val {{ font-size: 24px; font-weight: 700; color: var(--accent); line-height: 1.1; }}
-  .card .lbl {{ color: var(--muted); font-size: 11px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }}
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:9px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:13px 15px}
+.card .val{font-size:22px;font-weight:700;color:var(--accent);line-height:1.1}
+.card .lbl{color:var(--muted);font-size:10px;margin-top:3px;text-transform:uppercase;letter-spacing:.5px}
 
-  /* Charts */
-  .charts {{ display: grid; grid-template-columns: 1fr 1fr 280px; gap: 14px; margin-bottom: 24px; }}
-  .chart-box {{ background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }}
-  .chart-box h2 {{ font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }}
-  .chart-wrap {{ position: relative; height: 260px; }}
+/* Charts */
+.charts-top{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:11px}
+.charts-bot{display:grid;grid-template-columns:1fr 260px;gap:11px;margin-bottom:18px}
+.chart-box{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:13px 15px}
+.chart-box.clickable{cursor:pointer}
+.chart-box.clickable:hover{border-color:rgba(79,142,247,.4)}
+.ch{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+.ch h2{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.ch-hint{font-size:10px;color:#3d4560}
+.cw{position:relative;height:230px} .cw-tall{position:relative;height:290px}
 
-  /* Score legend */
-  .legend {{ display: flex; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }}
-  .legend-item {{ display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }}
-  .legend-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
+/* Chips */
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px;min-height:22px}
+.chip{display:inline-flex;align-items:center;gap:4px;background:rgba(79,142,247,.12);border:1px solid rgba(79,142,247,.3);border-radius:20px;padding:2px 9px;font-size:11px;color:var(--accent)}
+.chip button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:13px;line-height:1;padding:0;opacity:.6}
+.chip button:hover{opacity:1}
 
-  /* Controls */
-  .controls {{ display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }}
-  .controls input, .controls select {{
-    background: var(--card); border: 1px solid var(--border); border-radius: 6px;
-    color: var(--text); padding: 7px 12px; font-size: 13px; outline: none;
-  }}
-  .controls input {{ flex: 1; min-width: 200px; }}
-  .controls input:focus, .controls select:focus {{ border-color: var(--accent); }}
-  .count {{ color: var(--muted); font-size: 12px; white-space: nowrap; margin-left: auto; }}
+/* Controls */
+.controls{display:flex;gap:7px;margin-bottom:9px;flex-wrap:wrap;align-items:center}
+.controls input,.controls select{background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:13px;outline:none}
+.controls input{flex:1;min-width:160px}
+.controls input:focus,.controls select:focus{border-color:var(--accent)}
+.cnt{color:var(--muted);font-size:12px;white-space:nowrap;margin-left:auto}
 
-  /* Table */
-  .table-wrap {{ overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }}
-  table {{ width: 100%; border-collapse: collapse; }}
-  thead {{ background: var(--surface); position: sticky; top: 0; z-index: 2; }}
-  th {{ padding: 9px 12px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; cursor: pointer; user-select: none; white-space: nowrap; border-bottom: 1px solid var(--border); }}
-  th:hover {{ color: var(--text); }}
-  th .si {{ opacity: 0.35; margin-left: 3px; font-size: 10px; }}
-  th.asc  .si::after {{ content: "↑"; opacity: 1; color: var(--accent); }}
-  th.desc .si::after {{ content: "↓"; opacity: 1; color: var(--accent); }}
-  th:not(.asc):not(.desc) .si::after {{ content: "↕"; }}
-  tbody tr {{ border-top: 1px solid var(--border); transition: background 0.1s; }}
-  tbody tr:hover {{ background: rgba(79,142,247,0.05); }}
-  td {{ padding: 8px 12px; vertical-align: middle; }}
-  td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }}
-  td.muted {{ color: var(--muted); font-size: 12px; }}
-  td.tissue-cell {{ max-width: 220px; font-size: 12px; color: var(--muted); }}
-  td.cond-cell {{ max-width: 180px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .badge {{
-    display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px;
-    font-weight: 500; white-space: nowrap;
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-  }}
-  .score-pill {{
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600;
-    background: rgba(0,0,0,0.25); border: 1px solid;
-    white-space: nowrap;
-  }}
-  .score-dot {{ width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }}
-  .filename {{ font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }}
-  .no-results {{ text-align: center; padding: 48px; color: var(--muted); }}
+/* Sliders */
+.sliders{display:flex;gap:18px;margin-bottom:13px;flex-wrap:wrap}
+.sg{display:flex;flex-direction:column;gap:4px;min-width:190px}
+.sg label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:flex;justify-content:space-between}
+.sg label span{color:var(--text);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
 
-  /* Stat mini-bars inside cells */
-  .mini-bar-wrap {{ display: flex; align-items: center; gap: 6px; }}
-  .mini-bar {{ height: 4px; border-radius: 2px; background: var(--accent); opacity: 0.7; min-width: 2px; }}
+/* Legend */
+.legend{display:flex;gap:11px;flex-wrap:wrap;align-items:center;margin-bottom:13px}
+.li{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.ld{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 
-  @media (max-width: 1100px) {{ .charts {{ grid-template-columns: 1fr 1fr; }} }}
-  @media (max-width: 700px)  {{ .charts {{ grid-template-columns: 1fr; }} .main {{ padding: 14px; }} }}
+/* Table */
+.tw{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse}
+thead{background:var(--surface);position:sticky;top:0;z-index:2}
+th{padding:7px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:1px solid var(--border)}
+th:hover{color:var(--text)}
+th .si{opacity:.3;margin-left:3px;font-size:10px}
+th.asc .si::after{content:"↑";opacity:1;color:var(--accent)}
+th.desc .si::after{content:"↓";opacity:1;color:var(--accent)}
+th:not(.asc):not(.desc) .si::after{content:"↕"}
+tbody tr{border-top:1px solid var(--border);transition:background .1s;cursor:pointer}
+tbody tr:hover{background:rgba(79,142,247,.05)}
+tbody tr.active{background:rgba(79,142,247,.1)!important;outline:1px solid rgba(79,142,247,.35)}
+td{padding:6px 10px;vertical-align:middle}
+td.num{text-align:right;font-variant-numeric:tabular-nums;font-size:13px}
+td.sm{color:var(--muted);font-size:12px}
+td.clip{max-width:190px;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:500;white-space:nowrap;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(0,0,0,.2);border:1px solid;white-space:nowrap}
+.sdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.mono{font-family:"SF Mono","Fira Code",monospace;font-size:12px}
+.no-res{text-align:center;padding:44px;color:var(--muted)}
+.cp-btn{background:none;border:none;color:#3d4560;cursor:pointer;font-size:12px;padding:0 3px;vertical-align:middle}
+.cp-btn:hover{color:var(--accent)}
+.mbw{display:flex;align-items:center;gap:5px}
+.mb{height:4px;border-radius:2px;min-width:2px}
+
+/* Drawer */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+.ov.open{opacity:1;pointer-events:all}
+.drawer{position:fixed;right:0;top:0;bottom:0;width:400px;max-width:95vw;background:var(--surface);border-left:1px solid var(--border);z-index:101;transform:translateX(100%);transition:transform .25s cubic-bezier(.4,0,.2,1);overflow-y:auto;display:flex;flex-direction:column}
+.drawer.open{transform:translateX(0)}
+.dh{padding:16px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;position:sticky;top:0;background:var(--surface);z-index:1}
+.dt{font-size:13px;font-weight:600;font-family:"SF Mono","Fira Code",monospace;word-break:break-all}
+.dc{background:none;border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:15px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.dc:hover{color:var(--text);border-color:var(--text)}
+.db{padding:16px 18px;flex:1;display:flex;flex-direction:column;gap:14px}
+.ds-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600;margin-bottom:4px}
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.dstat{background:var(--card);border:1px solid var(--border);border-radius:7px;padding:9px 11px}
+.dstat .dv{font-size:19px;font-weight:700}
+.dstat .dl{font-size:11px;color:var(--muted);margin-top:2px}
+.drow{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)}
+.drow:last-child{border-bottom:none}
+.dk{color:var(--muted);font-size:12px;flex-shrink:0}
+.dvt{font-size:12px;text-align:right;word-break:break-word}
+
+@media(max-width:1100px){.charts-top,.charts-bot{grid-template-columns:1fr}}
+@media(max-width:700px){.main{padding:11px}}
 </style>
 </head>
 <body>
 
 <header>
   <h1>SpatialCorpus-110M &mdash; Dataset Explorer</h1>
-  <span>Last updated: {updated} &nbsp;·&nbsp; {n_files} datasets &nbsp;·&nbsp; {n_cells_fmt} cells</span>
+  <div style="display:flex;align-items:center;gap:14px">
+    <span class="updated">Updated __UPDATED__ &nbsp;·&nbsp; __N_FILES__ datasets &nbsp;·&nbsp; __N_CELLS__ cells</span>
+    <button id="btnReload" onclick="location.reload()">↻ Refresh</button>
+  </div>
 </header>
 
 <div class="main">
 
   <div class="cards">
-    <div class="card"><div class="val">{n_files}</div><div class="lbl">Datasets</div></div>
-    <div class="card"><div class="val">{n_cells_fmt}</div><div class="lbl">Total cells</div></div>
-    <div class="card"><div class="val">{n_human}</div><div class="lbl">Human</div></div>
-    <div class="card"><div class="val">{n_mouse}</div><div class="lbl">Mouse</div></div>
-    <div class="card"><div class="val">{n_spatial}</div><div class="lbl">Spatial assays</div></div>
-    <div class="card"><div class="val">{n_assays}</div><div class="lbl">Assay types</div></div>
-    <div class="card"><div class="val">{n_tissues}</div><div class="lbl">Tissue types</div></div>
-    <div class="card"><div class="val">{n_excellent}</div><div class="lbl">Very good+ fit</div></div>
+    <div class="card"><div class="val">__N_FILES__</div><div class="lbl">Datasets</div></div>
+    <div class="card"><div class="val">__N_CELLS__</div><div class="lbl">Total cells</div></div>
+    <div class="card"><div class="val">__N_HUMAN__</div><div class="lbl">Human</div></div>
+    <div class="card"><div class="val">__N_MOUSE__</div><div class="lbl">Mouse</div></div>
+    <div class="card"><div class="val">__N_SPATIAL__</div><div class="lbl">Spatial assays</div></div>
+    <div class="card"><div class="val">__N_ASSAYS__</div><div class="lbl">Assay types</div></div>
+    <div class="card"><div class="val">__N_TISSUES__</div><div class="lbl">Tissues</div></div>
+    <div class="card"><div class="val" id="cShowing">__N_FILES__</div><div class="lbl">Showing</div></div>
   </div>
 
-  <div class="charts">
-    <div class="chart-box">
-      <h2>Cells by assay</h2>
-      <div class="chart-wrap"><canvas id="chartAssay"></canvas></div>
+  <div class="charts-top">
+    <div class="chart-box clickable">
+      <div class="ch"><h2>Cells by assay</h2><span class="ch-hint">click bar → filter</span></div>
+      <div class="cw"><canvas id="cAssay"></canvas></div>
+    </div>
+    <div class="chart-box clickable">
+      <div class="ch"><h2>Cells by tissue (top 20)</h2><span class="ch-hint">click bar → filter</span></div>
+      <div class="cw"><canvas id="cTissue"></canvas></div>
+    </div>
+  </div>
+
+  <div class="charts-bot">
+    <div class="chart-box clickable">
+      <div class="ch">
+        <h2>Donors vs Cells — KaroSpace landscape</h2>
+        <span class="ch-hint">click dot · scroll zoom · drag pan</span>
+      </div>
+      <div class="cw-tall"><canvas id="cScatter"></canvas></div>
     </div>
     <div class="chart-box">
-      <h2>Cells by tissue (top 20)</h2>
-      <div class="chart-wrap"><canvas id="chartTissue"></canvas></div>
-    </div>
-    <div class="chart-box">
-      <h2>Cells by organism</h2>
-      <div class="chart-wrap"><canvas id="chartOrganism"></canvas></div>
+      <div class="ch"><h2>Cells by organism</h2></div>
+      <div class="cw"><canvas id="cOrg"></canvas></div>
     </div>
   </div>
 
   <div class="legend">
-    <span style="font-size:12px;color:var(--muted);margin-right:4px">KaroSpace fit:</span>
-    <div class="legend-item"><div class="legend-dot" style="background:#4fc47e"></div>Excellent (≥10 donors + spatial + DOI)</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#86efac"></div>Very good (≥5 donors + spatial or DOI)</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#fbbf24"></div>Good (≥2–4 donors + bonuses)</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#f97b4f"></div>Moderate (few donors)</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>Limited (single sample)</div>
+    <span style="font-size:11px;color:var(--muted);margin-right:2px">KaroSpace fit:</span>
+    <div class="li"><div class="ld" style="background:#4fc47e"></div>Excellent (≥10 donors + spatial + DOI)</div>
+    <div class="li"><div class="ld" style="background:#86efac"></div>Very good (≥10 donors + DOI or spatial)</div>
+    <div class="li"><div class="ld" style="background:#fbbf24"></div>Good (≥2 donors + bonuses)</div>
+    <div class="li"><div class="ld" style="background:#f97b4f"></div>Moderate</div>
+    <div class="li"><div class="ld" style="background:#94a3b8"></div>Limited (1 sample)</div>
   </div>
+
+  <div class="chips" id="chips"></div>
 
   <div class="controls">
-    <input type="text" id="search" placeholder="Search name, tissue, assay, condition…">
-    <select id="filterOrganism"><option value="">All organisms</option></select>
-    <select id="filterAssay"><option value="">All assays</option></select>
-    <select id="filterScore">
+    <input type="text" id="search" placeholder="Search dataset, tissue, assay, condition…">
+    <select id="fOrg"><option value="">All organisms</option></select>
+    <select id="fAssay"><option value="">All assays</option></select>
+    <select id="fSpatial">
+      <option value="">Spatial + non-spatial</option>
+      <option value="1">Spatial only</option>
+      <option value="0">Non-spatial only</option>
+    </select>
+    <select id="fScore">
       <option value="">All KaroSpace fits</option>
       <option value="5">Excellent (5)</option>
-      <option value="4">Very good (4)</option>
-      <option value="3">Good (3)</option>
-      <option value="2">Moderate (2)</option>
+      <option value="4">Very good (4+)</option>
+      <option value="3">Good (3+)</option>
+      <option value="2">Moderate (2+)</option>
     </select>
-    <span class="count" id="rowCount"></span>
+    <span class="cnt" id="rowCnt"></span>
   </div>
 
-  <div class="table-wrap">
-    <table id="dataTable">
+  <div class="sliders">
+    <div class="sg">
+      <label>Min donors <span id="dVal">1</span></label>
+      <input type="range" id="sDonors" min="1" max="1" value="1">
+    </div>
+    <div class="sg">
+      <label>Min cells <span id="cVal">0</span></label>
+      <input type="range" id="sCells" min="0" max="1" value="0">
+    </div>
+  </div>
+
+  <div class="tw">
+    <table>
       <thead><tr>
-        <th data-col="score" class="desc">KaroSpace fit<span class="si"></span></th>
+        <th data-col="score" class="desc">Fit<span class="si"></span></th>
+        <th data-col="is_spatial">Spatial<span class="si"></span></th>
         <th data-col="filename">Dataset<span class="si"></span></th>
         <th data-col="n_cells">Cells<span class="si"></span></th>
-        <th data-col="n_vars">Genes<span class="si"></span></th>
         <th data-col="n_donors">Donors<span class="si"></span></th>
-        <th data-col="n_conditions">Conditions<span class="si"></span></th>
-        <th data-col="n_tissue_types">Tissue types<span class="si"></span></th>
+        <th data-col="n_conditions">Cond.<span class="si"></span></th>
+        <th data-col="n_tissue_types">Tissues<span class="si"></span></th>
         <th data-col="n_sections">Sections<span class="si"></span></th>
+        <th data-col="n_vars">Genes<span class="si"></span></th>
         <th data-col="organism">Organism<span class="si"></span></th>
         <th data-col="assay">Assay<span class="si"></span></th>
         <th data-col="tissue">Tissue<span class="si"></span></th>
-        <th data-col="conditions">Conditions detail<span class="si"></span></th>
+        <th data-col="conditions">Conditions<span class="si"></span></th>
         <th>Publication</th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
-    <div class="no-results" id="noResults" style="display:none">No datasets match your filters.</div>
+    <div class="no-res" id="noRes" style="display:none">No datasets match your filters.</div>
   </div>
 </div>
 
+<!-- Drawer -->
+<div class="ov" id="ov"></div>
+<div class="drawer" id="drawer">
+  <div class="dh">
+    <div class="dt" id="dTitle"></div>
+    <button class="dc" id="dClose">✕</button>
+  </div>
+  <div class="db" id="dBody"></div>
+</div>
+
 <script>
-const ROWS       = {rows_json};
-const CHART_DATA = {chart_json};
-const MAX_CELLS  = Math.max(...ROWS.map(r => r.n_cells));
-const MAX_DONORS = Math.max(...ROWS.map(r => r.n_donors));
+const ROWS = __ROWS_JSON__;
+const CD   = __CHART_JSON__;
+const MAX_CELLS  = Math.max(...ROWS.map(r=>r.n_cells));
+const MAX_DONORS = Math.max(...ROWS.map(r=>r.n_donors));
 
-// ── Charts ───────────────────────────────────────────────────────────────────
-const BASE_OPTS = {{
-  maintainAspectRatio: false,
-  plugins: {{ legend: {{ display: false }} }},
-  scales: {{
-    x: {{ ticks: {{ color:"#8892a4", font:{{size:11}} }}, grid: {{color:"#2e3350"}} }},
-    y: {{ ticks: {{ color:"#8892a4", font:{{size:11}},
-          callback: v => v>=1e6 ? (v/1e6).toFixed(1)+"M" : v>=1e3 ? (v/1e3).toFixed(0)+"k" : v }},
-         grid: {{color:"#2e3350"}} }},
-  }},
-}};
-const H_OPTS = {{ ...BASE_OPTS, indexAxis:"y",
-  scales: {{ x: BASE_OPTS.scales.y, y: {{ ...BASE_OPTS.scales.x, ticks: {{ color:"#8892a4", font:{{size:11}} }} }} }} }};
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmt = n => n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n);
 
-new Chart(document.getElementById("chartAssay"), {{
+function mbar(val, max, color) {
+  const w = max>0 ? Math.max(3,Math.round((val/max)*60)) : 0;
+  return `<div class="mbw"><div class="mb" style="width:${w}px;background:${color||"#4f8ef7"}"></div><span>${fmt(val)}</span></div>`;
+}
+function dBar(n) {
+  if(!n) return '<span style="color:#4a5470">—</span>';
+  const c = n>=10?"#4fc47e":n>=5?"#86efac":n>=2?"#fbbf24":"#94a3b8";
+  const w = Math.max(3,Math.round((n/MAX_DONORS)*60));
+  return `<div class="mbw"><div class="mb" style="width:${w}px;background:${c}"></div><span style="color:${c};font-weight:600">${n}</span></div>`;
+}
+function cBadge(n) {
+  if(!n) return '<span style="color:#4a5470">—</span>';
+  const c = n>=10?"#4fc47e":n>=5?"#86efac":n>=3?"#fbbf24":"#94a3b8";
+  return `<span style="color:${c};font-weight:600">${n}</span>`;
+}
+
+// ── Slider init ───────────────────────────────────────────────────────────────
+const sDonors = document.getElementById("sDonors");
+const sCells  = document.getElementById("sCells");
+sDonors.max = MAX_DONORS;
+sCells.max  = MAX_CELLS;
+sCells.step = Math.max(1000, Math.round(MAX_CELLS/100));
+sDonors.addEventListener("input",()=>{ document.getElementById("dVal").textContent=sDonors.value; render(); });
+sCells.addEventListener("input", ()=>{ document.getElementById("cVal").textContent=fmt(+sCells.value); render(); });
+
+// ── Populate selects ──────────────────────────────────────────────────────────
+function populate(id, vals) {
+  const s = document.getElementById(id);
+  [...new Set(vals)].sort().forEach(v=>{ const o=document.createElement("option"); o.value=o.textContent=v; s.appendChild(o); });
+}
+populate("fOrg",   ROWS.map(r=>r.organism).filter(Boolean));
+populate("fAssay", ROWS.map(r=>r.assay).filter(Boolean));
+
+// ── Chart colour lookup ────────────────────────────────────────────────────────
+const ACMAP = {};
+CD.assay.labels.forEach((l,i)=>ACMAP[l]=CD.assay.colors[i]);
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+const GRID = {color:"#222640"};
+const TICK = {color:"#6b7591",font:{size:11}};
+const YCB  = v=>v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e3?(v/1e3).toFixed(0)+"k":v;
+const HOPTS = {
+  maintainAspectRatio:false, indexAxis:"y",
+  plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>" "+fmt(c.parsed.x)+" cells"}}},
+  scales:{x:{ticks:{...TICK,callback:YCB},grid:GRID}, y:{ticks:TICK,grid:GRID}},
+};
+
+// Assay bar — click filters
+new Chart(document.getElementById("cAssay"),{
   type:"bar",
-  data:{{ labels: CHART_DATA.assay.labels,
-          datasets:[{{ data: CHART_DATA.assay.values, backgroundColor: CHART_DATA.assay.colors, borderRadius:4 }}] }},
-  options: H_OPTS,
-}});
-new Chart(document.getElementById("chartTissue"), {{
-  type:"bar",
-  data:{{ labels: CHART_DATA.tissue.labels,
-          datasets:[{{ data: CHART_DATA.tissue.values, backgroundColor:"#4f8ef7", borderRadius:4 }}] }},
-  options: H_OPTS,
-}});
-new Chart(document.getElementById("chartOrganism"), {{
-  type:"doughnut",
-  data:{{ labels: CHART_DATA.organism.labels,
-          datasets:[{{ data: CHART_DATA.organism.values, backgroundColor: CHART_DATA.organism.colors, borderWidth:0, hoverOffset:6 }}] }},
-  options:{{
-    maintainAspectRatio:false,
-    plugins:{{ legend:{{ display:true, position:"bottom",
-      labels:{{ color:"#8892a4", font:{{size:12}}, padding:16 }} }} }},
-  }},
-}});
-
-// ── Dropdowns ────────────────────────────────────────────────────────────────
-function populateSelect(id, values) {{
-  const sel = document.getElementById(id);
-  [...new Set(values)].sort().forEach(v => {{
-    const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o);
-  }});
-}}
-populateSelect("filterOrganism", ROWS.map(r => r.organism).filter(Boolean));
-populateSelect("filterAssay",    ROWS.map(r => r.assay).filter(Boolean));
-
-// ── Table rendering ──────────────────────────────────────────────────────────
-let sortCol = "score", sortDir = -1;
-
-function fmt(n) {{
-  return n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n);
-}}
-
-function miniBar(val, max) {{
-  const pct = max > 0 ? Math.max(4, Math.round((val/max)*80)) : 0;
-  return `<div class="mini-bar-wrap">
-    <div class="mini-bar" style="width:${{pct}}px"></div>
-    <span>${{fmt(val)}}</span>
-  </div>`;
-}}
-
-function donorBar(n) {{
-  if (!n) return '<span style="color:#64748b">—</span>';
-  const color = n >= 10 ? "#4fc47e" : n >= 5 ? "#86efac" : n >= 2 ? "#fbbf24" : "#94a3b8";
-  const pct   = Math.max(4, Math.round((n / MAX_DONORS) * 72));
-  return `<div class="mini-bar-wrap">
-    <div class="mini-bar" style="width:${{pct}}px;background:${{color}}"></div>
-    <span style="color:${{color}};font-weight:600">${{n}}</span>
-  </div>`;
-}}
-
-function countBadge(n) {{
-  if (!n) return '<span style="color:#64748b">—</span>';
-  const color = n >= 5 ? "#4fc47e" : n >= 3 ? "#86efac" : n >= 2 ? "#fbbf24" : "#94a3b8";
-  return `<span style="color:${{color}};font-weight:600">${{n}}</span>`;
-}}
-
-function render() {{
-  const q     = document.getElementById("search").value.toLowerCase();
-  const org   = document.getElementById("filterOrganism").value;
-  const assay = document.getElementById("filterAssay").value;
-  const score = document.getElementById("filterScore").value;
-
-  let filtered = ROWS.filter(r => {{
-    if (org   && r.organism !== org)           return false;
-    if (assay && r.assay    !== assay)         return false;
-    if (score && r.score    <  Number(score))  return false;
-    if (q) {{
-      const hay = [r.filename, r.tissue, r.assay, r.organism, r.conditions, r.pub_title].join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
-    }}
-    return true;
-  }});
-
-  filtered.sort((a, b) => {{
-    const av = a[sortCol], bv = b[sortCol];
-    return (typeof av === "number" ? av - bv : String(av).localeCompare(String(bv))) * sortDir;
-  }});
-
-  const tbody = document.getElementById("tbody");
-  tbody.innerHTML = "";
-  filtered.forEach(r => {{
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>
-        <span class="score-pill" style="color:${{r.score_color}};border-color:${{r.score_color}}55">
-          <span class="score-dot" style="background:${{r.score_color}}"></span>
-          ${{r.score_label}}
-        </span>
-      </td>
-      <td class="filename">${{r.filename}}</td>
-      <td class="num">${{miniBar(r.n_cells, MAX_CELLS)}}</td>
-      <td class="num muted">${{r.n_vars.toLocaleString()}}</td>
-      <td class="num">${{donorBar(r.n_donors)}}</td>
-      <td class="num">${{countBadge(r.n_conditions)}}</td>
-      <td class="num">${{countBadge(r.n_tissue_types)}}</td>
-      <td class="num muted">${{r.n_sections || "—"}}</td>
-      <td class="muted" style="font-size:12px">${{r.organism}}</td>
-      <td><span class="badge" style="color:${{r.assay_color}};border-color:${{r.assay_color}}44">${{r.assay}}</span></td>
-      <td class="tissue-cell">${{r.tissue}}</td>
-      <td class="cond-cell" title="${{r.conditions}}">${{r.conditions}}</td>
-      <td style="font-size:12px">${{r.pub_html}}</td>
-    `;
-    tbody.appendChild(tr);
-  }});
-
-  document.getElementById("rowCount").textContent = `${{filtered.length}} of ${{ROWS.length}} datasets`;
-  document.getElementById("noResults").style.display = filtered.length ? "none" : "block";
-}}
-
-document.querySelectorAll("th[data-col]").forEach(th => {{
-  th.addEventListener("click", () => {{
-    const col = th.dataset.col;
-    sortDir = sortCol === col ? sortDir * -1 : -1;
-    sortCol = col;
-    document.querySelectorAll("th").forEach(h => h.classList.remove("asc","desc"));
-    th.classList.add(sortDir === -1 ? "desc" : "asc");
+  data:{labels:CD.assay.labels, datasets:[{data:CD.assay.values,backgroundColor:CD.assay.colors,borderRadius:4}]},
+  options:{...HOPTS, onClick(_,els){
+    if(!els.length) return;
+    const v=CD.assay.labels[els[0].index];
+    const s=document.getElementById("fAssay");
+    s.value = s.value===v ? "" : v;
     render();
-  }});
-}});
+  }},
+});
 
-["search","filterOrganism","filterAssay","filterScore"].forEach(id =>
-  document.getElementById(id).addEventListener("input", render)
-);
+// Tissue bar — click sets search
+new Chart(document.getElementById("cTissue"),{
+  type:"bar",
+  data:{labels:CD.tissue.labels, datasets:[{data:CD.tissue.values,backgroundColor:"#4f8ef7",borderRadius:4}]},
+  options:{...HOPTS, onClick(_,els){
+    if(!els.length) return;
+    const v=CD.tissue.labels[els[0].index];
+    const s=document.getElementById("search");
+    s.value = s.value===v ? "" : v;
+    render();
+  }},
+});
+
+// Organism doughnut
+new Chart(document.getElementById("cOrg"),{
+  type:"doughnut",
+  data:{labels:CD.organism.labels, datasets:[{data:CD.organism.values,backgroundColor:CD.organism.colors,borderWidth:0,hoverOffset:6}]},
+  options:{maintainAspectRatio:false, plugins:{legend:{display:true,position:"bottom",labels:{color:"#8892a4",font:{size:12},padding:12}}}},
+});
+
+// Scatter: donors vs cells — click opens drawer
+const scatterData = ROWS.map(r=>({ x:Math.max(r.n_donors,0.5), y:r.n_cells, r:Math.max(4,r.score*2.5), row:r }));
+new Chart(document.getElementById("cScatter"),{
+  type:"bubble",
+  data:{datasets:[{
+    data:scatterData,
+    backgroundColor:scatterData.map(d=>(ACMAP[d.row.assay]||"#4f8ef7")+"bb"),
+    borderColor:scatterData.map(d=>ACMAP[d.row.assay]||"#4f8ef7"),
+    borderWidth:1,
+  }]},
+  options:{
+    maintainAspectRatio:false,
+    plugins:{
+      legend:{display:false},
+      zoom:{zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:"xy"}, pan:{enabled:true,mode:"xy"}},
+      tooltip:{callbacks:{
+        title:c=>c[0].raw.row.filename,
+        label:c=>[`  Donors: ${c.raw.row.n_donors}`,`  Cells: ${fmt(c.raw.row.n_cells)}`,`  Assay: ${c.raw.row.assay}`,`  Fit: ${c.raw.row.score_label}`],
+      }},
+    },
+    scales:{
+      x:{type:"logarithmic", title:{display:true,text:"Number of donors",color:"#6b7591",font:{size:11}},
+         ticks:{...TICK,callback:v=>[1,2,5,10,20,50].includes(v)?v:""}, grid:GRID},
+      y:{type:"logarithmic", title:{display:true,text:"Number of cells",color:"#6b7591",font:{size:11}},
+         ticks:{...TICK,callback:YCB}, grid:GRID},
+    },
+    onClick(_,els){ if(els.length) openDrawer(els[0].element.$context.raw.row); },
+  },
+});
+
+// ── Chips ─────────────────────────────────────────────────────────────────────
+function renderChips(){
+  const el=document.getElementById("chips"); el.innerHTML="";
+  const add=(lbl,clear)=>{
+    const c=document.createElement("div"); c.className="chip";
+    c.innerHTML=`${lbl}<button>×</button>`; c.querySelector("button").onclick=clear; el.appendChild(c);
+  };
+  const q=document.getElementById("search").value;
+  if(q)                                       add(`"${q}"`,()=>{document.getElementById("search").value="";render();});
+  if(document.getElementById("fOrg").value)   add(document.getElementById("fOrg").value,()=>{document.getElementById("fOrg").value="";render();});
+  if(document.getElementById("fAssay").value)   add(document.getElementById("fAssay").value,()=>{document.getElementById("fAssay").value="";render();});
+  if(document.getElementById("fSpatial").value) add(document.getElementById("fSpatial").value==="1"?"Spatial only":"Non-spatial only",()=>{document.getElementById("fSpatial").value="";render();});
+  if(document.getElementById("fScore").value)   add("Fit ≥ "+document.getElementById("fScore").value,()=>{document.getElementById("fScore").value="";render();});
+  if(+sDonors.value>1) add(`≥${sDonors.value} donors`,()=>{sDonors.value=1;document.getElementById("dVal").textContent="1";render();});
+  if(+sCells.value >0) add(`≥${fmt(+sCells.value)} cells`,()=>{sCells.value=0;document.getElementById("cVal").textContent="0";render();});
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+let sortCol="score", sortDir=-1, activeRow=null;
+
+function render(){
+  const q       = document.getElementById("search").value.toLowerCase();
+  const org     = document.getElementById("fOrg").value;
+  const assay   = document.getElementById("fAssay").value;
+  const spatial = document.getElementById("fSpatial").value;
+  const score   = document.getElementById("fScore").value;
+  const minD    = +sDonors.value;
+  const minC    = +sCells.value;
+
+  let rows = ROWS.filter(r=>{
+    if(org     && r.organism!==org)              return false;
+    if(assay   && r.assay!==assay)               return false;
+    if(spatial==="1" && !r.is_spatial)           return false;
+    if(spatial==="0" &&  r.is_spatial)           return false;
+    if(score   && r.score< +score)               return false;
+    if(r.n_donors<minD)                          return false;
+    if(r.n_cells <minC)                          return false;
+    if(q){ const h=[r.filename,r.tissue,r.assay,r.organism,r.conditions,r.pub_title].join(" ").toLowerCase(); if(!h.includes(q)) return false; }
+    return true;
+  });
+
+  rows.sort((a,b)=>{
+    const av=a[sortCol],bv=b[sortCol];
+    return (typeof av==="number"?av-bv:String(av).localeCompare(String(bv)))*sortDir;
+  });
+
+  const tbody=document.getElementById("tbody"); tbody.innerHTML="";
+  rows.forEach(r=>{
+    const tr=document.createElement("tr");
+    if(activeRow?.filename===r.filename) tr.classList.add("active");
+    tr.innerHTML=`
+      <td><span class="pill" style="color:${r.score_color};border-color:${r.score_color}55"><span class="sdot" style="background:${r.score_color}"></span>${r.score_label}</span></td>
+      <td style="text-align:center">${r.is_spatial
+        ? '<span title="Spatial" style="color:#4f8ef7;font-size:15px">⬡</span>'
+        : '<span title="Non-spatial" style="color:#3d4560;font-size:13px">—</span>'}</td>
+      <td class="mono">${r.filename} <button class="cp-btn" title="${r.filepath}" onclick="event.stopPropagation();navigator.clipboard.writeText('${r.filepath}');this.textContent='✓';setTimeout(()=>this.textContent='⎘',1200)">⎘</button></td>
+      <td class="num">${mbar(r.n_cells,MAX_CELLS,"#4f8ef7")}</td>
+      <td class="num">${dBar(r.n_donors)}</td>
+      <td class="num">${cBadge(r.n_conditions)}</td>
+      <td class="num">${cBadge(r.n_tissue_types)}</td>
+      <td class="num sm">${r.n_sections||"—"}</td>
+      <td class="num sm">${r.n_vars.toLocaleString()}</td>
+      <td class="sm">${r.organism}</td>
+      <td><span class="badge" style="color:${r.assay_color};border-color:${r.assay_color}44">${r.assay}</span></td>
+      <td class="clip" title="${r.tissue}">${r.tissue}</td>
+      <td class="clip" title="${r.conditions}">${r.conditions}</td>
+      <td style="font-size:12px">${r.pub_html}</td>`;
+    tr.addEventListener("click",e=>{ if(e.target.tagName==="A") return; openDrawer(r); });
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("rowCnt").textContent=`${rows.length} of ${ROWS.length}`;
+  document.getElementById("cShowing").textContent=rows.length;
+  document.getElementById("noRes").style.display=rows.length?"none":"block";
+  renderChips();
+}
+
+// ── Detail drawer ─────────────────────────────────────────────────────────────
+function openDrawer(r){
+  activeRow=r;
+  document.getElementById("dTitle").textContent=r.filename;
+  const sc=r.score_color;
+  const drows=([
+    ["Assay",    `<span class="badge" style="color:${r.assay_color};border-color:${r.assay_color}44">${r.assay}</span>`],
+    ["Organism", r.organism],
+    ["Tissue",   r.tissue||"—"],
+    ["Sex",      r.sex||"—"],
+    ["Conditions", r.conditions||"—"],
+  ]).map(([k,v])=>`<div class="drow"><span class="dk">${k}</span><span class="dvt">${v}</span></div>`).join("");
+
+  document.getElementById("dBody").innerHTML=`
+    <div>
+      <span class="pill" style="color:${sc};border-color:${sc}55;font-size:13px;padding:4px 12px">
+        <span class="sdot" style="background:${sc};width:8px;height:8px"></span>
+        ${r.score_label} &nbsp;(${r.score}/5)
+      </span>
+    </div>
+
+    <div>
+      <div class="ds-title">Sample structure</div>
+      <div class="dgrid">
+        <div class="dstat"><div class="dv" style="color:${r.n_donors>=10?"#4fc47e":r.n_donors>=5?"#86efac":r.n_donors>=2?"#fbbf24":"#94a3b8"}">${r.n_donors||"—"}</div><div class="dl">Donors / samples</div></div>
+        <div class="dstat"><div class="dv">${r.n_conditions||"—"}</div><div class="dl">Conditions</div></div>
+        <div class="dstat"><div class="dv">${r.n_tissue_types||"—"}</div><div class="dl">Tissue types</div></div>
+        <div class="dstat"><div class="dv">${r.n_sections||"—"}</div><div class="dl">Sections</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="ds-title">Scale</div>
+      <div class="dgrid">
+        <div class="dstat"><div class="dv">${fmt(r.n_cells)}</div><div class="dl">Cells</div></div>
+        <div class="dstat"><div class="dv">${r.n_vars.toLocaleString()}</div><div class="dl">Genes</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="ds-title">File path</div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+        <code style="font-size:11px;color:var(--muted);flex:1;word-break:break-all">${r.filepath}</code>
+        <button onclick="navigator.clipboard.writeText(this.dataset.path);this.textContent='✓';setTimeout(()=>this.textContent='Copy',1200)" data-path="${r.filepath}" style="background:none;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:11px;flex-shrink:0">Copy</button>
+      </div>
+    </div>
+    <div><div class="ds-title">Metadata</div>${drows}</div>
+
+    ${r.pub_html?`
+    <div>
+      <div class="ds-title">Publication</div>
+      ${r.pub_title?`<div style="font-size:13px;line-height:1.5;margin-bottom:6px">${r.pub_title}</div>`:""}
+      <div style="font-size:13px">${r.pub_html}</div>
+    </div>`:""}
+  `;
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("ov").classList.add("open");
+  render();
+}
+
+function closeDrawer(){
+  activeRow=null;
+  document.getElementById("drawer").classList.remove("open");
+  document.getElementById("ov").classList.remove("open");
+  render();
+}
+document.getElementById("dClose").addEventListener("click",closeDrawer);
+document.getElementById("ov").addEventListener("click",closeDrawer);
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeDrawer(); });
+
+// ── Sort headers ──────────────────────────────────────────────────────────────
+document.querySelectorAll("th[data-col]").forEach(th=>{
+  th.addEventListener("click",()=>{
+    const col=th.dataset.col;
+    sortDir=sortCol===col?sortDir*-1:-1; sortCol=col;
+    document.querySelectorAll("th").forEach(h=>h.classList.remove("asc","desc"));
+    th.classList.add(sortDir===-1?"desc":"asc");
+    render();
+  });
+});
+["search","fOrg","fAssay","fSpatial","fScore"].forEach(id=>document.getElementById(id).addEventListener("input",render));
 
 render();
 </script>
@@ -521,30 +703,28 @@ def generate() -> None:
     n_cells_fmt   = f"{n_cells_total/1e6:.1f}M" if n_cells_total >= 1e6 else f"{n_cells_total:,}"
     n_tissues     = df["tissue"].str.split(";").explode().str.strip().dropna().nunique()
     n_assays      = df["assay"].str.split(";").explode().str.strip().dropna().nunique()
-    n_with_doi    = int((df["publication_doi"].notna() & (df["publication_doi"] != "")).sum())
     n_human       = int((df["organism"] == "Homo sapiens").sum())
     n_mouse       = int((df["organism"] == "Mus musculus").sum())
-    n_excellent   = sum(1 for r in table_rows if r["score"] >= 4)   # "Very good" or better
+    n_excellent   = sum(1 for r in table_rows if r["score"] >= 4)
     n_spatial     = sum(1 for r in table_rows if any(
         s in str(r.get("assay", "")).lower() for s in SPATIAL_ASSAYS
     ))
 
-    html = HTML_TEMPLATE.format(
-        updated     = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-        n_files     = len(df),
-        n_cells_fmt = n_cells_fmt,
-        n_human     = n_human,
-        n_mouse     = n_mouse,
-        n_spatial   = n_spatial,
-        n_assays    = n_assays,
-        n_tissues   = n_tissues,
-        n_excellent = n_excellent,
-        rows_json   = json.dumps(table_rows, ensure_ascii=False),
-        chart_json  = json.dumps(chart_data,  ensure_ascii=False),
-    )
+    html = HTML_TEMPLATE \
+        .replace("__UPDATED__",     pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")) \
+        .replace("__N_FILES__",     str(len(df))) \
+        .replace("__N_CELLS__",     n_cells_fmt) \
+        .replace("__N_HUMAN__",     str(n_human)) \
+        .replace("__N_MOUSE__",     str(n_mouse)) \
+        .replace("__N_SPATIAL__",   str(n_spatial)) \
+        .replace("__N_ASSAYS__",    str(n_assays)) \
+        .replace("__N_TISSUES__",   str(n_tissues)) \
+        .replace("__N_EXCELLENT__", str(n_excellent)) \
+        .replace("__ROWS_JSON__",   json.dumps(table_rows, ensure_ascii=False)) \
+        .replace("__CHART_JSON__",  json.dumps(chart_data,  ensure_ascii=False))
 
     HTML_PATH.write_text(html, encoding="utf-8")
-    print(f"Dashboard written → {HTML_PATH}  ({len(df)} datasets, {n_cells_fmt} cells, {n_excellent} excellent)")
+    print(f"Dashboard written → {HTML_PATH}  ({len(df)} datasets, {n_cells_fmt} cells, {n_excellent} very-good+)")
 
 
 if __name__ == "__main__":
