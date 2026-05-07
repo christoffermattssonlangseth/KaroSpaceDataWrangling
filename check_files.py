@@ -1,0 +1,40 @@
+import os
+paths = [
+    "/private/tmp/tissuumaps_extract_20260505/data/files/MS_xenium_data_v5_with_images_tmap.companion.ready.h5ad",
+    "/Volumes/processing2/KaroSpaceDataWrangle/codex3.h5ad",
+    "/Volumes/processing2/KaroSpaceDataWrangle/coxms3.h5ad",
+    "/Volumes/processing2/KaroSpaceDataWrangle/dbit-30258697/E13_20_fig3.companion.ready.h5ad",
+    "/Volumes/processing2/KaroSpaceDataWrangle/dbit-30258697/E13_50_2.companion.ready.h5ad",
+    "/Volumes/processing2/KaroSpaceDataWrangle/raw/merfish/processed_mapped/adata_coronal_mapped_scVI_GMM.h5ad",
+    "/Volumes/processing2/KaroSpaceDataWrangle/raw/merfish/processed_mapped/adata_sagittal_mapped_scVI_GMM.h5ad",
+    "/Volumes/processing2/erectile_dysfunction/data/adata/ED_5k_filtered_clustered_cytetype_cellcharter_metadata_subset_updated_mana.h5ad",
+    "/Volumes/processing2/RRmap/data/RRmap_metadata_fixed_update.h5ad",
+    "/Volumes/processing2/RRmap/data/RREAE_5k_raw_only_integration_processed_updated_annotation_compartment_cytetype.h5ad",
+    "/Volumes/processing2/RRmap/data/cell_paper_mana.h5ad",
+    "/Volumes/processing2/ST_BRICHOS/data/ST_BRICHOS_region_subcluster.h5ad",
+    "/Volumes/processing2/ST_BRICHOS/data/ST_BRICHOS_region_subcluster.companion.ready.h5ad",
+    "/Volumes/processing2/autism/autism_concatenated_filtered_sparse_315genes.companion.ready.h5ad",
+    "/Volumes/processing2/autism/autism_concatenated_filtered_sparse_485genes.companion.ready.h5ad",
+    "/Volumes/processing2/autism/autism_concatenated_filtered_sparse.companion.ready.h5ad",
+    "/Volumes/processing2/dbit-nature/data/adata_multi_pp-mana.h5ad",
+    "/Volumes/processing2/nature-dev-mouse-reanalysis/ad_all_processed_with_polygons_mana.h5ad",
+    "/Volumes/processing2/BALO/baloMS-nuclei-clustered-sc.h5ad",
+    "/Volumes/processing2/oligo-mtDSB/data/mtDNA_DSB_5k_clustered_annotation_MANA.h5ad",
+    "/Volumes/processing2/xenium-pancreas/data/xenium_pancreas_clustered_mana.h5ad",
+    "/Users/chrislangseth/Downloads/baloMS_indep_clust_balo_MANA_SC.companion.ready.h5ad",
+    "/Users/chrislangseth/Downloads/GSE253710.processed.companion.ready.h5ad",
+    "/Users/chrislangseth/Downloads/GSE284005_merfish_all.companion.ready.h5ad",
+    "/Users/chrislangseth/Downloads/Human_VisiumHD_compressed_v1.companion.ready.h5ad",
+    "/Users/chrislangseth/Downloads/muBrainRelease_seurat.companion.ready.h5ad",
+    "/Users/chrislangseth/Downloads/Nanostring_CosMX_v1.companion.ready.h5ad",
+    "/Users/chrislangseth/Downloads/talbot_xenium_tumor_annotated_updated_cellcharter.companion.ready.h5ad",
+    "/Users/chrislangseth/work/karolinska_institutet/projects/KaroSpaceDataWrangling/data/xenium_cml/atera_human-breast_cancer.companion.ready.h5ad",
+    "/Users/chrislangseth/work/karolinska_institutet/projects/KaroSpaceDataWrangling/data/processed/dev-heart/dev_heart_combined.companion.ready.h5ad",
+    "/Users/chrislangseth/work/karolinska_institutet/projects/KaroSpaceDataWrangling/data/processed/glioblastoma-xenium/glioblastoma-xenium-combined-analysis.companion.ready_with_polygons_sample_id_remapped.h5ad",
+    "/Users/chrislangseth/work/karolinska_institutet/projects/KaroSpaceDataWrangling/data/processed/GSE284089/GSM8677818.companion.ready.h5ad",
+    "/Users/chrislangseth/work/karolinska_institutet/projects/KaroSpaceDataWrangling/data/humanDevMeninges/humanDevMeninges_loom_celllevel_combined.h5ad",
+    "/Users/chrislangseth/work/karolinska_institutet/projects/KaroSpaceDataWrangling/data/visium_data/RR3-brain_ST_final_object.companion.ready.h5ad"
+]
+existing = [p for p in paths if os.path.exists(p)]
+for p in existing:
+    print(p)
